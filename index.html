@@ -3,32 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leitor de CEP</title>
+    <title>OCR Pwa</title>
     <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icons/icon-192.svg" sizes="192x192" type="image/svg+xml">
+    <!-- PNG fallback as data URI (1x1 transparent) to avoid external requests and favicon 404 -->
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=" sizes="32x32">
+    <link rel="shortcut icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; background: #f4f4f9; margin: 0; padding: 20px; }
-        #video { width: 100%; max-width: 400px; border: 3px solid #333; border-radius: 12px; background: #000; }
-        .controls { margin-top: 20px; text-align: center; }
+        #video { width: 100%; max-width: 400px; border: 3px solid #333; border-radius: 12px; background: #000; display: block; margin: 0 auto; }
+        .controls { margin-top: 20px; display: flex; justify-content: center; }
         button { padding: 15px 25px; font-size: 18px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 8px; transition: 0.3s; display: flex; align-items: center; gap: 10px; }
         button:active { transform: scale(0.95); }
         button:disabled { background: #6c757d; cursor: not-allowed; opacity: 0.8; }
         #btn-scan.processing::before { content: ''; display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        #btn-scan.processing i { display: none; }
         @keyframes spin { to { transform: rotate(360deg); } }
         #status { margin-top: 15px; padding: 10px; border-radius: 5px; background: #eee; min-width: 200px; text-align: center; }
         .table-section { margin-top: 30px; width: 100%; max-width: 600px; }
         .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
         .table-header h3 { margin: 0; color: #333; }
+        .table-actions { margin-top: 12px; display: flex; justify-content: flex-end; }
         #btn-clear { background: #dc3545; padding: 10px 20px; font-size: 14px; }
         #btn-clear:hover { background: #c82333; }
         table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); }
         thead { background: #f8f9fa; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #dee2e6; }
-        th { font-weight: 600; color: #495057; }
+        th, td { padding: 8px 10px; text-align: center; vertical-align: middle; border-bottom: 1px solid #dee2e6; }
+        th { font-weight: 600; color: #495057; font-size: 13px; }
+        td { font-size: 14px; }
         tbody tr:hover { background: #f8f9fa; }
         tbody tr:last-child td { border-bottom: none; }
         .empty-table { text-align: center; color: #999; padding: 20px; }
+        .table-section { display: none; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); justify-content: center; align-items: center; z-index: 1000; }
         .modal.show { display: flex; }
         .modal-content { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3); max-width: 400px; width: 90%; }
@@ -42,35 +51,47 @@
         #btn-confirm-cep:hover { background: #218838; }
         #btn-cancel-cep { background: #6c757d; color: white; }
         #btn-cancel-cep:hover { background: #5a6268; }
+        #btn-cancel-cep { background: #dc3545; }
+        #btn-cancel-cep:hover { background: #c82333; }
+        header { background: linear-gradient(135deg, #0b63a6 0%, #145a9a 50%, #0f3b66 100%); color: white; padding: 18px 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 8px 30px rgba(2, 6, 23, 0.12); display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box; }
+        header h3 { margin: 0; font-size: 20px; font-weight: 600; display: flex; align-items: center; gap: 12px; }
+        header h3 i { font-size: 22px; opacity: 0.95; }
+        .version { font-size: 12px; background: rgba(255, 255, 255, 0.12); padding: 6px 12px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.12); }
+        .container-card { width: 100%; max-width: 720px; background: white; border-radius: 14px; padding: 20px; box-shadow: 0 12px 40px rgba(2, 6, 23, 0.08); box-sizing: border-box; margin: 24px auto; }
     </style>
 </head>
 <body>
-    <h2>Scanner de Etiquetas</h2>
+    <div class="container-card">
+        <header>
+            <h3><i class="fa fa-file-text-o"></i> Document Scanner</h3>
+            <span class="version">v1.0</span>
+        </header>
     <video id="video" autoplay playsinline></video>
     <div class="controls">
-        <button id="btn-scan"><i class="fa fa-camera"></i>LER DOCUMENTO</button>
+        <button id="btn-scan"><i class="fa fa-camera"></i><span id="btn-scan-text">Capturar Imagem</span></button>
     </div>
-    <div id="status">Aguardando comando...</div>
+    <!-- <div id="status">Aguardando comando...</div> -->
     <canvas id="canvas" style="display:none;"></canvas>
     
-    <div class="table-section">
-        <div class="table-header">
-            <h3><i class="fa fa-list"></i> CEPs Lidos</h3>
-            <button id="btn-clear"><i class="fa fa-trash"></i>Limpar</button>
-        </div>
+    <div class="table-section" id="table-section">
         <table>
             <thead>
                 <tr>
                     <th>CEP</th>
                     <th>Data/Hora</th>
+                    <th>Tempo (ms)</th>
                 </tr>
             </thead>
             <tbody id="cep-table-body">
                 <tr class="empty-table">
-                    <td colspan="2">Document list is empty</td>
+                    <td colspan="3">Document list is empty</td>
                 </tr>
             </tbody>
         </table>
+        <div class="table-actions">
+            <button id="btn-clear"><i class="fa fa-trash"></i> Limpar</button>
+        </div>
+    </div>
     </div>
     
     <div id="manual-cep-modal" class="modal">
@@ -80,8 +101,8 @@
                 <input type="text" id="manual-cep-input" placeholder="Digite o CEP (ex: 12345-678)" maxlength="9">
             </div>
             <div class="modal-footer">
-                <button id="btn-cancel-cep">Cancelar</button>
-                <button id="btn-confirm-cep">Confirmar</button>
+                <button id="btn-cancel-cep"><i class="fa fa-times"></i> Cancelar</button>
+                <button id="btn-confirm-cep"><i class="fa fa-check"></i> Confirmar</button>
             </div>
         </div>
     </div>

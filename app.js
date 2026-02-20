@@ -1,8 +1,9 @@
 const video = document.getElementById('video');
 const btn = document.getElementById('btn-scan');
-const status = document.getElementById('status');
+const btnScanText = document.getElementById('btn-scan-text');
 const canvas = document.getElementById('canvas');
 const btnClear = document.getElementById('btn-clear');
+const tableSection = document.getElementById('table-section');
 const tableBody = document.getElementById('cep-table-body');
 const modal = document.getElementById('manual-cep-modal');
 const manualCepInput = document.getElementById('manual-cep-input');
@@ -13,7 +14,11 @@ const btnCancelCep = document.getElementById('btn-cancel-cep');
 navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
     .then(stream => { video.srcObject = stream; })
     .catch(err => {
-        status.innerText = "Erro ao acessar câmera: " + (err && (err.message || err.toString()));
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro na Câmera',
+            text: err && (err.message || err.toString())
+        });
         console.error("getUserMedia error:", err);
     });
 
@@ -21,9 +26,7 @@ btn.onclick = async () => {
     // Desabilitar botão e mudar para estado processando
     btn.disabled = true;
     btn.classList.add('processing');
-    btn.innerText = 'Processando...';
-    status.style.color = "blue";
-    status.innerText = "Lendo imagem (aguarde)...";
+    btnScanText.textContent = 'Processando...';
 
     // Congelar frame no canvas
     canvas.width = video.videoWidth;
@@ -32,40 +35,41 @@ btn.onclick = async () => {
     const imgData = canvas.toDataURL('image/jpeg');
 
     try {
-        // Executar OCR
-        const { data: { text } } = await Tesseract.recognize(imgData, 'por');
-        
+        // Executar OCR e medir tempo
+        const t0 = performance.now();
+        const result = await Tesseract.recognize(imgData, 'por');
+        const t1 = performance.now();
+        const durationMs = Math.round(t1 - t0);
+        const text = result && result.data && result.data.text ? result.data.text : '';
+
         // Regex para CEP (00000-000 ou 00000000)
         const matched = text.match(/\b\d{5}-?\d{3}\b/);
 
         if (matched) {
             const cep = matched[0];
-            status.style.color = "green";
-            status.innerText = "Encontrado: " + cep;
-            enviarDados(cep);
+            enviarDados(cep, durationMs);
         } else {
-            status.style.color = "red";
-            status.innerText = "CEP não localizado.";
+            // abrir modal para entrada manual (sem tempo)
             abrirModalCep();   
         }
     } catch (e) {
         const msg = e && (e.message || e.toString()) || 'Erro desconhecido';
-        status.style.color = "red";
-        status.innerText = "Erro no processamento: " + msg;
         console.error("Processamento falhou:", e);
-        alert("Erro ao processar a imagem: " + msg);
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro no Processamento',
+            text: msg
+        });
     } finally {
-        // Restaurar botão ao estado original
         btn.disabled = false;
         btn.classList.remove('processing');
-        btn.innerText = 'LER DOCUMENTO';
+        btnScanText.textContent = 'Capturar Imagem';
     }
 };
 
-function enviarDados(cepValue) {
-    console.log('CEP: ', cepValue);
-    alert('CEP => ' + cepValue);
-    adicionarCepTabela(cepValue);
+function enviarDados(cepValue, durationMs = null) {
+    //console.log(cepValue, durationMs);
+    adicionarCepTabela(cepValue, durationMs);
     // const url_backend = "https://seu-backend-aqui.com"; 
     // try {
     //     await fetch(url_backend, {
@@ -76,17 +80,18 @@ function enviarDados(cepValue) {
     //     alert("CEP enviado com sucesso!");
     // } catch (error) {
     //     console.error("Erro no envio:", error);
-    //     status.style.color = "red";
-    //     status.innerText = "Erro ao enviar CEP: " + (error && (error.message || error.toString()));
     // }
 }
 
-function adicionarCepTabela(cep) {
+function adicionarCepTabela(cep, durationMs = null) {
     // Remover linha vazia se existir
     const emptyRow = tableBody.querySelector('.empty-table');
     if (emptyRow) {
         emptyRow.remove();
     }
+    
+    // Mostrar seção da tabela
+    tableSection.style.display = 'block';
     
     // Criar data e hora formatadas
     const agora = new Date();
@@ -95,16 +100,30 @@ function adicionarCepTabela(cep) {
     
     // Criar nova linha
     const row = document.createElement('tr');
-    row.innerHTML = `<td>${cep}</td><td>${data} ${hora}</td>`;
+    const tempoCell = (typeof durationMs === 'number') ? `${durationMs}` : '-';
+    row.innerHTML = `<td>${cep}</td><td>${data} ${hora}</td><td>${tempoCell}</td>`;
     tableBody.insertBefore(row, tableBody.firstChild);
 }
 
 function limparTabela() {
-    tableBody.innerHTML = '<tr class="empty-table"><td colspan="2">Nenhum CEP lido ainda</td></tr>';
+    tableBody.innerHTML = '<tr class="empty-table"><td colspan="2">Document list is empty</td></tr>';
+    tableSection.style.display = 'none';
 }
 
-btnClear.onclick = () => {
-    if (confirm('Deseja realmente limpar todos os registros de CEP?')) {
+btnClear.onclick = async () => {
+    const result = await Swal.fire({
+        icon: 'warning',
+        title: 'Confirmar Limpeza',
+        text: 'Deseja realmente limpar todas as leituras?',
+        showDenyButton: true,
+        confirmButtonText: '<i class="fa fa-check"></i> Sim',
+        denyButtonText: '<i class="fa fa-times"></i> Não',
+        confirmButtonColor: '#28a745',
+        denyButtonColor: '#dc3545',
+        confirmButtonHTML: '<i class="fa fa-check"></i> Sim',
+        denyButtonHTML: '<i class="fa fa-times"></i> Não'
+    });
+    if (result.isConfirmed) {
         limparTabela();
     }
 };
@@ -125,13 +144,17 @@ function confirmarCepManual() {
     
     // Validar formato do CEP (00000-000 ou 00000000)
     if (!cep || !cep.match(/^\d{5}-?\d{3}$/) && !cep.match(/^\d{8}$/)) {
-        alert('CEP inválido. Use o formato 12345-678 ou 12345678');
+        Swal.fire({
+            icon: 'error',
+            title: 'CEP Inválido',
+            text: 'Use o formato 12345-678 ou 12345678'
+        });
         manualCepInput.focus();
         return;
     }
     
-    // Formatar CEP
-    const cepFormatado = cep.match(/-/) ? cep : cep.replace(/(\d{5})(\d{3})/, '$1-$2');
+    // Formatar CEP - adiciona hífen automaticamente se informado com 8 números
+    const cepFormatado = cep.match(/-/) ? cep : cep.replace(/^(\d{5})(\d{3})$/, '$1-$2');
     
     fecharModalCep();
     enviarDados(cepFormatado);
