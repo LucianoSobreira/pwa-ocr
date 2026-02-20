@@ -1,0 +1,54 @@
+const video = document.getElementById('video');
+const btn = document.getElementById('btn-scan');
+const status = document.getElementById('status');
+const canvas = document.getElementById('canvas');
+
+// Iniciar câmera traseira
+navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+    .then(stream => { video.srcObject = stream; })
+    .catch(err => { status.innerText = "Erro ao acessar câmera."; });
+
+btn.onclick = async () => {
+    status.style.color = "blue";
+    status.innerText = "Lendo imagem (aguarde)...";
+
+    // Congelar frame no canvas
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const imgData = canvas.toDataURL('image/jpeg');
+
+    try {
+        // Executar OCR
+        const { data: { text } } = await Tesseract.recognize(imgData, 'por');
+        
+        // Regex para CEP (00000-000 ou 00000000)
+        const matched = text.match(/\b\d{5}-?\d{3}\b/);
+
+        if (matched) {
+            const cep = matched[0];
+            status.style.color = "green";
+            status.innerText = "Encontrado: " + cep;
+            enviarDados(cep);
+        } else {
+            status.style.color = "red";
+            status.innerText = "CEP não localizado.";
+        }
+    } catch (e) {
+        status.innerText = "Erro no processamento.";
+    }
+};
+
+async function enviarDados(cepValue) {
+    const url_backend = "https://seu-backend-aqui.com"; 
+    try {
+        await fetch(url_backend, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cep: cepValue, timestamp: new Date() })
+        });
+        alert("CEP enviado com sucesso!");
+    } catch (error) {
+        console.error("Erro no envio:", error);
+    }
+}
