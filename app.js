@@ -62,17 +62,18 @@ btn.onclick = async () => {
 };
 
 async function enviarDados(cepValue) {
-    const url_backend = "https://seu-backend-aqui.com"; 
-    try {
-        await fetch(url_backend, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cep: cepValue, timestamp: new Date() })
-        });
-        alert("CEP enviado com sucesso!");
-    } catch (error) {
-        console.error("Erro no envio:", error);
-        status.style.color = "red";
-        status.innerText = "Erro ao enviar CEP: " + (error && (error.message || error.toString()));
-    }
+    console.log('Enviando dados para o backend => CEP: ', cepValue);
+    // const url_backend = "https://seu-backend-aqui.com"; 
+    // try {
+    //     await fetch(url_backend, {
+    //         method: 'POST',
+    //         headers: { 'Content-Type': 'application/json' },
+    //         body: JSON.stringify({ cep: cepValue, timestamp: new Date() })
+    //     });
+    //     alert("CEP enviado com sucesso!");
+    // } catch (error) {
+    //     console.error("Erro no envio:", error);
+    //     status.style.color = "red";
+    //     status.innerText = "Erro ao enviar CEP: " + (error && (error.message || error.toString()));
+    // }
 }
