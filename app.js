@@ -6,7 +6,10 @@ const canvas = document.getElementById('canvas');
 // Iniciar câmera traseira
 navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
     .then(stream => { video.srcObject = stream; })
-    .catch(err => { status.innerText = "Erro ao acessar câmera."; });
+    .catch(err => {
+        status.innerText = "Erro ao acessar câmera: " + (err && (err.message || err.toString()));
+        console.error("getUserMedia error:", err);
+    });
 
 btn.onclick = async () => {
     status.style.color = "blue";
@@ -35,7 +38,10 @@ btn.onclick = async () => {
             status.innerText = "CEP não localizado.";
         }
     } catch (e) {
-        status.innerText = "Erro no processamento.";
+        const msg = e && (e.message || e.toString()) || 'Erro desconhecido';
+        status.style.color = "red";
+        status.innerText = "Erro no processamento: " + msg;
+        console.error("Processamento falhou:", e);
     }
 };
 
@@ -50,5 +56,7 @@ async function enviarDados(cepValue) {
         alert("CEP enviado com sucesso!");
     } catch (error) {
         console.error("Erro no envio:", error);
+        status.style.color = "red";
+        status.innerText = "Erro ao enviar CEP: " + (error && (error.message || error.toString()));
     }
 }
