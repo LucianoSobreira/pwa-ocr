@@ -22,8 +22,24 @@ btn.onclick = async () => {
     const imgData = canvas.toDataURL('image/jpeg');
 
     try {
-        // Executar OCR
-        const { data: { text } } = await Tesseract.recognize(imgData, 'por');
+        // Executar OCR com logger para progresso
+        status.style.color = "blue";
+        status.innerText = "Iniciando OCR...";
+        const { data: { text } } = await Tesseract.recognize(imgData, 'por', {
+            logger: m => {
+                // Mostrar progresso no status e log no console
+                try {
+                    if (m && m.status) {
+                        const pct = (typeof m.progress === 'number') ? ' ' + Math.round(m.progress * 100) + '%' : '';
+                        status.innerText = m.status + pct;
+                        status.style.color = "blue";
+                    }
+                } catch (uiErr) {
+                    console.warn('UI update falhou:', uiErr);
+                }
+                console.log('Tesseract:', m);
+            }
+        });
         
         // Regex para CEP (00000-000 ou 00000000)
         const matched = text.match(/\b\d{5}-?\d{3}\b/);
