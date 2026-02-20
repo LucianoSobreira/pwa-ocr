@@ -52,17 +52,20 @@ btn.onclick = async () => {
         } else {
             status.style.color = "red";
             status.innerText = "CEP não localizado.";
+            alert("Nenhum CEP encontrado na imagem");   
         }
     } catch (e) {
         const msg = e && (e.message || e.toString()) || 'Erro desconhecido';
         status.style.color = "red";
         status.innerText = "Erro no processamento: " + msg;
         console.error("Processamento falhou:", e);
+        alert("Erro ao processar a imagem: " + msg);
     }
 };
 
 async function enviarDados(cepValue) {
     console.log('Enviando dados para o backend => CEP: ', cepValue);
+    alert('CEP => ' + cepValue);
     // const url_backend = "https://seu-backend-aqui.com"; 
     // try {
     //     await fetch(url_backend, {
