@@ -10,56 +10,179 @@ const manualCepInput = document.getElementById('manual-cep-input');
 const btnConfirmCep = document.getElementById('btn-confirm-cep');
 const btnCancelCep = document.getElementById('btn-cancel-cep');
 
-// Iniciar câmera traseira
-navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-    .then(stream => { video.srcObject = stream; })
-    .catch(err => {
+let currentStream = null;
+let deviceCompatible = false;
+
+/* =========================================================
+   DEVICE COMPATIBILITY CHECK
+========================================================= */
+
+document.addEventListener("DOMContentLoaded", async () => {
+    const result = await checkDeviceCompatibility();
+
+    if (!result.compatible) {
+        deviceCompatible = false;
+
         Swal.fire({
             icon: 'error',
-            title: 'Erro na Câmera',
-            text: err && (err.message || err.toString())
+            title: 'Dispositivo não compatível',
+            html: result.message,
+            confirmButtonText: 'Entendi'
         });
-        console.error("getUserMedia error:", err);
-    });
+
+        btn.disabled = true;
+    } else {
+        deviceCompatible = true;
+        console.log("Dispositivo compatível.");
+    }
+});
+
+async function checkDeviceCompatibility() {
+
+    let issues = [];
+
+    // HTTPS obrigatório
+    if (!window.isSecureContext) {
+        issues.push("Aplicação precisa estar em HTTPS.");
+    }
+
+    if (!navigator.mediaDevices) {
+        issues.push("MediaDevices não suportado.");
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+        issues.push("getUserMedia não suportado neste navegador.");
+    }
+
+    // Verificar se há câmera
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasCamera = devices.some(d => d.kind === "videoinput");
+
+        if (!hasCamera) {
+            issues.push("Nenhuma câmera encontrada.");
+        }
+    } catch {
+        issues.push("Não foi possível verificar dispositivos de mídia.");
+    }
+
+    // Verificar permissão (quando suportado)
+    if (navigator.permissions) {
+        try {
+            const permission = await navigator.permissions.query({ name: 'camera' });
+            if (permission.state === 'denied') {
+                issues.push("Permissão da câmera está bloqueada.");
+            }
+        } catch {
+            console.log("Permissions API não suportada totalmente.");
+        }
+    }
+
+    return {
+        compatible: issues.length === 0,
+        message: issues.length === 0
+            ? "Dispositivo compatível."
+            : "<ul style='text-align:left'>" +
+              issues.map(i => `<li>${i}</li>`).join("") +
+              "</ul>"
+    };
+}
+
+/* =========================================================
+   CAMERA START (ONLY ON USER ACTION)
+========================================================= */
+
+async function startCamera() {
+
+    if (!deviceCompatible) return;
+
+    try {
+        currentStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: { ideal: "environment" }
+            },
+            audio: false
+        });
+
+        video.srcObject = currentStream;
+        await video.play();
+
+    } catch (err) {
+
+        Swal.fire({
+            icon: 'error',
+            title: 'Erro ao acessar câmera',
+            html: `
+                ${err.message}<br><br>
+                <b>Sugestões:</b><br>
+                - Verifique se a câmera não está em uso<br>
+                - Atualize o Chrome<br>
+                - Atualize o Android System WebView<br>
+                - Reinicie o navegador
+            `
+        });
+
+        console.error("Camera error:", err);
+        throw err;
+    }
+}
+
+function stopCamera() {
+    if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+    }
+}
+
+/* =========================================================
+   CAPTURE BUTTON
+========================================================= */
 
 btn.onclick = async () => {
-    // Desabilitar botão e mudar para estado processando
+
+    if (!currentStream) {
+        await startCamera();
+        if (!currentStream) return;
+    }
+
     btn.disabled = true;
     btn.classList.add('processing');
     btnScanText.textContent = 'Processando...';
 
-    // Congelar frame no canvas
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0);
     const imgData = canvas.toDataURL('image/jpeg');
 
     try {
-        // Executar OCR e medir tempo
         const t0 = performance.now();
         const result = await Tesseract.recognize(imgData, 'por');
         const t1 = performance.now();
         const durationMs = Math.round(t1 - t0);
-        const text = result && result.data && result.data.text ? result.data.text : '';
 
-        // Regex para CEP (00000-000 ou 00000000)
+        const text = result?.data?.text || '';
         const matched = text.match(/\b\d{5}-?\d{3}\b/);
 
         if (matched) {
-            const cep = matched[0];
+            const cep = matched[0].includes('-')
+                ? matched[0]
+                : matched[0].replace(/^(\d{5})(\d{3})$/, '$1-$2');
+
             enviarDados(cep, durationMs);
         } else {
-            // abrir modal para entrada manual (sem tempo)
-            abrirModalCep();   
+            abrirModalCep();
         }
+
     } catch (e) {
-        const msg = e && (e.message || e.toString()) || 'Erro desconhecido';
-        console.error("Processamento falhou:", e);
+
         Swal.fire({
             icon: 'error',
             title: 'Erro no Processamento',
-            text: msg
+            text: e.message || 'Erro desconhecido'
         });
+
+        console.error("OCR error:", e);
+
     } finally {
         btn.disabled = false;
         btn.classList.remove('processing');
@@ -67,66 +190,57 @@ btn.onclick = async () => {
     }
 };
 
+/* =========================================================
+   DATA HANDLING
+========================================================= */
+
 function enviarDados(cepValue, durationMs = null) {
-    //console.log(cepValue, durationMs);
     adicionarCepTabela(cepValue, durationMs);
-    // const url_backend = "https://seu-backend-aqui.com"; 
-    // try {
-    //     await fetch(url_backend, {
-    //         method: 'POST',
-    //         headers: { 'Content-Type': 'application/json' },
-    //         body: JSON.stringify({ cep: cepValue, timestamp: new Date() })
-    //     });
-    //     alert("CEP enviado com sucesso!");
-    // } catch (error) {
-    //     console.error("Erro no envio:", error);
-    // }
 }
 
 function adicionarCepTabela(cep, durationMs = null) {
-    // Remover linha vazia se existir
+
     const emptyRow = tableBody.querySelector('.empty-table');
-    if (emptyRow) {
-        emptyRow.remove();
-    }
-    
-    // Mostrar seção da tabela
+    if (emptyRow) emptyRow.remove();
+
     tableSection.style.display = 'block';
-    
-    // Criar data e hora formatadas
+
     const agora = new Date();
-    const data = agora.toLocaleDateString('pt-BR');
-    const hora = agora.toLocaleTimeString('pt-BR');
-    
-    // Criar nova linha
+    const dataHora = agora.toLocaleString('pt-BR');
+
     const row = document.createElement('tr');
-    const tempoCell = (typeof durationMs === 'number') ? `${durationMs}` : '-';
-    row.innerHTML = `<td>${cep}</td><td>${data} ${hora}</td><td>${tempoCell}</td>`;
+    row.innerHTML = `
+        <td>${cep}</td>
+        <td>${dataHora}</td>
+        <td>${typeof durationMs === 'number' ? durationMs : '-'}</td>
+    `;
+
     tableBody.insertBefore(row, tableBody.firstChild);
 }
 
 function limparTabela() {
-    tableBody.innerHTML = '<tr class="empty-table"><td colspan="2">Document list is empty</td></tr>';
+    tableBody.innerHTML =
+        '<tr class="empty-table"><td colspan="3">Document list is empty</td></tr>';
     tableSection.style.display = 'none';
 }
 
 btnClear.onclick = async () => {
+
     const result = await Swal.fire({
         icon: 'warning',
         title: 'Confirmar Limpeza',
         text: 'Deseja realmente limpar todas as leituras?',
-        showDenyButton: true,
-        confirmButtonText: '<i class="fa fa-check"></i> Sim',
-        denyButtonText: '<i class="fa fa-times"></i> Não',
-        confirmButtonColor: '#28a745',
-        denyButtonColor: '#dc3545',
-        confirmButtonHTML: '<i class="fa fa-check"></i> Sim',
-        denyButtonHTML: '<i class="fa fa-times"></i> Não'
+        showCancelButton: true,
+        confirmButtonText: 'Sim',
+        cancelButtonText: 'Não'
     });
-    if (result.isConfirmed) {
-        limparTabela();
-    }
+
+    if (result.isConfirmed) limparTabela();
 };
+
+/* =========================================================
+   MODAL MANUAL CEP
+========================================================= */
 
 function abrirModalCep() {
     manualCepInput.value = '';
@@ -140,36 +254,43 @@ function fecharModalCep() {
 }
 
 function confirmarCepManual() {
+
     const cep = manualCepInput.value.trim();
-    
-    // Validar formato do CEP (00000-000 ou 00000000)
-    if (!cep || !cep.match(/^\d{5}-?\d{3}$/) && !cep.match(/^\d{8}$/)) {
+
+    if (!/^\d{5}-?\d{3}$/.test(cep)) {
         Swal.fire({
             icon: 'error',
             title: 'CEP Inválido',
             text: 'Use o formato 12345-678 ou 12345678'
         });
-        manualCepInput.focus();
         return;
     }
-    
-    // Formatar CEP - adiciona hífen automaticamente se informado com 8 números
-    const cepFormatado = cep.match(/-/) ? cep : cep.replace(/^(\d{5})(\d{3})$/, '$1-$2');
-    
+
+    const cepFormatado = cep.includes('-')
+        ? cep
+        : cep.replace(/^(\d{5})(\d{3})$/, '$1-$2');
+
     fecharModalCep();
     enviarDados(cepFormatado);
 }
 
-manualCepInput.onkeypress = (e) => {
-    if (e.key === 'Enter') {
-        confirmarCepManual();
-    }
+manualCepInput.onkeypress = e => {
+    if (e.key === 'Enter') confirmarCepManual();
 };
 
 manualCepInput.oninput = () => {
-    // Permitir apenas números e hífen
-    manualCepInput.value = manualCepInput.value.replace(/[^\d-]/g, '');
+    manualCepInput.value =
+        manualCepInput.value.replace(/[^\d-]/g, '');
 };
 
 btnConfirmCep.onclick = confirmarCepManual;
 btnCancelCep.onclick = fecharModalCep;
+
+/* =========================================================
+   CLEANUP ON PAGE EXIT (ANDROID SAFETY)
+========================================================= */
+
+window.addEventListener('beforeunload', stopCamera);
+window.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopCamera();
+});
