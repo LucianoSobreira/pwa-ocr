@@ -9,6 +9,8 @@ const modal = document.getElementById('manual-cep-modal');
 const manualCepInput = document.getElementById('manual-cep-input');
 const btnConfirmCep = document.getElementById('btn-confirm-cep');
 const btnCancelCep = document.getElementById('btn-cancel-cep');
+const btnCheckDevice = document.getElementById('btn-check-device');
+const deviceStatus = document.getElementById('device-status');
 
 let currentStream = null;
 let deviceCompatible = false;
@@ -18,24 +20,47 @@ let deviceCompatible = false;
 ========================================================= */
 
 document.addEventListener("DOMContentLoaded", async () => {
+    await verificarCompatibilidadeDispositivo();
+});
+
+function atualizarStatusDispositivo(result) {
+    if (!deviceStatus) return;
+
+    deviceStatus.classList.remove('ok', 'error');
+
+    if (result.compatible) {
+        deviceStatus.classList.add('ok');
+        deviceStatus.textContent = 'Status do dispositivo: compatível';
+    } else {
+        deviceStatus.classList.add('error');
+        deviceStatus.textContent = 'Status do dispositivo: não compatível';
+    }
+}
+
+async function verificarCompatibilidadeDispositivo(showSuccess = false) {
     const result = await checkDeviceCompatibility();
 
-    if (!result.compatible) {
-        deviceCompatible = false;
+    deviceCompatible = result.compatible;
+    btn.disabled = !result.compatible;
+    atualizarStatusDispositivo(result);
 
+    if (!result.compatible) {
         Swal.fire({
             icon: 'error',
             title: 'Dispositivo não compatível',
             html: result.message,
             confirmButtonText: 'Entendi'
         });
-
-        btn.disabled = true;
-    } else {
-        deviceCompatible = true;
-        console.log("Dispositivo compatível.");
+    } else if (showSuccess) {
+        Swal.fire({
+            icon: 'success',
+            title: 'Dispositivo compatível',
+            text: 'O dispositivo está configurado corretamente para executar a aplicação.'
+        });
     }
-});
+
+    return result;
+}
 
 async function checkDeviceCompatibility() {
 
@@ -285,6 +310,9 @@ manualCepInput.oninput = () => {
 
 btnConfirmCep.onclick = confirmarCepManual;
 btnCancelCep.onclick = fecharModalCep;
+btnCheckDevice.onclick = async () => {
+    await verificarCompatibilidadeDispositivo(true);
+};
 
 /* =========================================================
    CLEANUP ON PAGE EXIT (ANDROID SAFETY)

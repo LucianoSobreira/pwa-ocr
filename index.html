@@ -15,10 +15,15 @@
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; background: #f4f4f9; margin: 0; padding: 20px; }
         #video { width: 100%; max-width: 400px; border: 3px solid #333; border-radius: 12px; background: #000; display: block; margin: 0 auto; }
-        .controls { margin-top: 20px; display: flex; justify-content: center; }
+        .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
         button { padding: 15px 25px; font-size: 18px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 8px; transition: 0.3s; display: flex; align-items: center; gap: 10px; }
         button:active { transform: scale(0.95); }
         button:disabled { background: #6c757d; cursor: not-allowed; opacity: 0.8; }
+        #btn-check-device { background: #0b63a6; }
+        #btn-check-device:hover { background: #084e84; }
+        .device-status { margin-top: 14px; text-align: center; font-size: 14px; font-weight: 600; color: #6c757d; }
+        .device-status.ok { color: #218838; }
+        .device-status.error { color: #dc3545; }
         #btn-scan.processing::before { content: ''; display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
         #btn-scan.processing i { display: none; }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -64,12 +69,14 @@
     <div class="container-card">
         <header>
             <h3><i class="fa fa-file-text-o"></i> Document Scanner</h3>
-            <span class="version">v1.0</span>
+            <span class="version">v1.1</span>
         </header>
     <video id="video" autoplay playsinline></video>
     <div class="controls">
         <button id="btn-scan"><i class="fa fa-camera"></i><span id="btn-scan-text">Capturar Imagem</span></button>
+        <button id="btn-check-device"><i class="fa fa-mobile"></i>Verificar Dispositivo</button>
     </div>
+    <div id="device-status" class="device-status">Status do dispositivo: aguardando verificação...</div>
     <!-- <div id="status">Aguardando comando...</div> -->
     <canvas id="canvas" style="display:none;"></canvas>
     
