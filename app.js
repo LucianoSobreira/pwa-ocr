@@ -271,6 +271,43 @@ function stopCamera() {
     }
 }
 
+function formatCepFromDigits(digits) {
+    if (!/^\d{8}$/.test(digits)) return null;
+    return digits.replace(/^(\d{5})(\d{3})$/, '$1-$2');
+}
+
+function normalizeOcrTextForCep(text) {
+    return text
+        .toUpperCase()
+        .replace(/[OQ]/g, '0')
+        .replace(/[IL]/g, '1')
+        .replace(/S/g, '5')
+        .replace(/B/g, '8')
+        .replace(/Z/g, '2');
+}
+
+function extractCepFromOcrText(text) {
+    if (!text) return null;
+
+    const normalizedText = normalizeOcrTextForCep(text);
+    const patterns = [
+        /\b\d{2}[.\s]?\d{3}\s*[-.,]?\s*\d{3}\b/g,
+        /\b\d{5}\s*[-.,]?\s*\d{3}\b/g
+    ];
+
+    for (const pattern of patterns) {
+        const matches = normalizedText.match(pattern) || [];
+
+        for (const match of matches) {
+            const digits = match.replace(/\D/g, '');
+            const cep = formatCepFromDigits(digits);
+            if (cep) return cep;
+        }
+    }
+
+    return null;
+}
+
 /* =========================================================
    CAPTURE BUTTON
 ========================================================= */
@@ -298,13 +335,9 @@ btn.onclick = async () => {
         const durationMs = Math.round(t1 - t0);
 
         const text = (result && result.data && result.data.text) ? result.data.text : '';
-        const matched = text.match(/\b\d{5}-?\d{3}\b/);
+        const cep = extractCepFromOcrText(text);
 
-        if (matched) {
-            const cep = matched[0].includes('-')
-                ? matched[0]
-                : matched[0].replace(/^(\d{5})(\d{3})$/, '$1-$2');
-
+        if (cep) {
             enviarDados(cep, durationMs);
         } else {
             abrirModalCep();
