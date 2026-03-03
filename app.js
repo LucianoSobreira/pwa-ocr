@@ -33,6 +33,24 @@ function showAlert(options) {
     return Promise.resolve({ isConfirmed: true });
 }
 
+function renderChecksHtml(checks) {
+    if (!checks || !checks.length) {
+        return "<p>Nenhuma checagem foi executada.</p>";
+    }
+
+    return "<ul style='text-align:left; padding-left:18px; margin:0;'>" +
+        checks.map(function (check) {
+            const statusText = check.ok ? "OK" : "ERRO";
+            const statusColor = check.ok ? "#218838" : "#dc3545";
+            return "<li style='margin-bottom:8px;'>" +
+                "<b>" + check.label + "</b><br>" +
+                "<span style='color:" + statusColor + "; font-weight:700;'>" + statusText + "</span>" +
+                " - " + check.detail +
+                "</li>";
+        }).join("") +
+        "</ul>";
+}
+
 /* =========================================================
    DEVICE COMPATIBILITY CHECK
 ========================================================= */
@@ -63,17 +81,32 @@ async function verificarCompatibilidadeDispositivo(showSuccess = false) {
     atualizarStatusDispositivo(result);
 
     if (!result.compatible) {
+        const issuesHtml = result.issues && result.issues.length
+            ? "<ul style='text-align:left; padding-left:18px;'>" +
+              result.issues.map(function (issue) { return "<li>" + issue + "</li>"; }).join("") +
+              "</ul>"
+            : "<p>Nenhum bloqueio informado.</p>";
+
         showAlert({
             icon: 'error',
             title: 'Dispositivo não compatível',
-            html: result.message,
+            html:
+                "<p style='text-align:left;'>Resultado das checagens:</p>" +
+                renderChecksHtml(result.checks) +
+                "<p style='text-align:left; margin-top:12px;'><b>Bloqueios encontrados:</b></p>" +
+                issuesHtml,
             confirmButtonText: 'Entendi'
         });
     } else if (showSuccess) {
         showAlert({
             icon: 'success',
             title: 'Dispositivo compatível',
-            text: 'O dispositivo está configurado corretamente para executar a aplicação.'
+            html:
+                "<p style='text-align:left;'>Resultado das checagens:</p>" +
+                renderChecksHtml(result.checks) +
+                "<p style='text-align:left; margin-top:12px;'><b>Bloqueios encontrados:</b></p>" +
+                "<p style='text-align:left; margin:0;'>Nenhum bloqueio encontrado.</p>",
+            confirmButtonText: 'Entendi'
         });
     }
 
@@ -83,34 +116,70 @@ async function verificarCompatibilidadeDispositivo(showSuccess = false) {
 async function checkDeviceCompatibility() {
 
     let issues = [];
+    const checks = [];
+
+    function addCheck(label, ok, detail) {
+        checks.push({ label: label, ok: ok, detail: detail });
+    }
 
     // HTTPS obrigatório
-    if (!window.isSecureContext) {
-        issues.push("Aplicação precisa estar em HTTPS.");
-    }
+    const secureContext = !!window.isSecureContext;
+    addCheck(
+        "Contexto seguro (HTTPS)",
+        secureContext,
+        secureContext ? "Aplicação em contexto seguro." : "Aplicação precisa estar em HTTPS."
+    );
+    if (!secureContext) issues.push("Aplicação precisa estar em HTTPS.");
 
-    if (!navigator.mediaDevices) {
-        issues.push("MediaDevices não suportado.");
-    }
+    const hasMediaDevices = !!navigator.mediaDevices;
+    addCheck(
+        "API MediaDevices",
+        hasMediaDevices,
+        hasMediaDevices ? "MediaDevices disponível." : "MediaDevices não suportado."
+    );
+    if (!hasMediaDevices) issues.push("MediaDevices não suportado.");
 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        issues.push("getUserMedia não suportado neste navegador.");
-    }
+    const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    addCheck(
+        "getUserMedia",
+        hasGetUserMedia,
+        hasGetUserMedia ? "getUserMedia disponível." : "getUserMedia não suportado neste navegador."
+    );
+    if (!hasGetUserMedia) issues.push("getUserMedia não suportado neste navegador.");
+
+    const hasEnumerateDevices = !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices);
+    addCheck(
+        "enumerateDevices",
+        hasEnumerateDevices,
+        hasEnumerateDevices ? "enumerateDevices disponível." : "enumerateDevices não suportado neste navegador."
+    );
+    if (!hasEnumerateDevices) issues.push("enumerateDevices não suportado neste navegador.");
 
     // Verificar se há câmera
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    if (hasEnumerateDevices) {
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const hasCamera = devices.some(function (d) { return d.kind === "videoinput"; });
+            addCheck(
+                "Acesso aos dispositivos",
+                true,
+                "Lista de dispositivos obtida com sucesso."
+            );
 
             if (!hasCamera) {
                 issues.push("Nenhuma câmera encontrada.");
+                addCheck("Câmera disponível", false, "Nenhuma câmera encontrada.");
+            } else {
+                addCheck("Câmera disponível", true, "Foi encontrada ao menos uma câmera.");
             }
         } catch (error) {
             issues.push("Não foi possível verificar dispositivos de mídia.");
+            addCheck(
+                "Acesso aos dispositivos",
+                false,
+                "Não foi possível listar dispositivos de mídia."
+            );
         }
-    } else {
-        issues.push("enumerateDevices não suportado neste navegador.");
     }
 
     // Verificar permissão (quando suportado)
@@ -119,14 +188,35 @@ async function checkDeviceCompatibility() {
             const permission = await navigator.permissions.query({ name: 'camera' });
             if (permission.state === 'denied') {
                 issues.push("Permissão da câmera está bloqueada.");
+                addCheck("Permissão da câmera", false, "Permissão da câmera está bloqueada.");
+            } else {
+                addCheck(
+                    "Permissão da câmera",
+                    true,
+                    permission.state === 'granted'
+                        ? "Permissão concedida."
+                        : "Permissão ainda não concedida, será solicitada no uso."
+                );
             }
         } catch (error) {
-            console.log("Permissions API não suportada totalmente.");
+            addCheck(
+                "Permissão da câmera",
+                true,
+                "Permissions API não suportada totalmente (não bloqueia uso)."
+            );
         }
+    } else {
+        addCheck(
+            "Permissão da câmera",
+            true,
+            "Permissions API indisponível (não bloqueia uso)."
+        );
     }
 
     return {
         compatible: issues.length === 0,
+        checks: checks,
+        issues: issues,
         message: issues.length === 0
             ? "Dispositivo compatível."
             : "<ul style='text-align:left'>" +
