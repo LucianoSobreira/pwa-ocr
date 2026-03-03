@@ -15,6 +15,24 @@ const deviceStatus = document.getElementById('device-status');
 let currentStream = null;
 let deviceCompatible = false;
 
+function showAlert(options) {
+    if (window.Swal && typeof window.Swal.fire === 'function') {
+        return window.Swal.fire(options);
+    }
+
+    const safeOptions = options || {};
+    const title = safeOptions.title || 'Aviso';
+    const text = safeOptions.text || (safeOptions.html ? safeOptions.html.replace(/<[^>]*>/g, ' ') : '');
+    const message = title + '\n\n' + text;
+
+    if (safeOptions.showCancelButton) {
+        return Promise.resolve({ isConfirmed: window.confirm(message) });
+    }
+
+    window.alert(message);
+    return Promise.resolve({ isConfirmed: true });
+}
+
 /* =========================================================
    DEVICE COMPATIBILITY CHECK
 ========================================================= */
@@ -45,14 +63,14 @@ async function verificarCompatibilidadeDispositivo(showSuccess = false) {
     atualizarStatusDispositivo(result);
 
     if (!result.compatible) {
-        Swal.fire({
+        showAlert({
             icon: 'error',
             title: 'Dispositivo não compatível',
             html: result.message,
             confirmButtonText: 'Entendi'
         });
     } else if (showSuccess) {
-        Swal.fire({
+        showAlert({
             icon: 'success',
             title: 'Dispositivo compatível',
             text: 'O dispositivo está configurado corretamente para executar a aplicação.'
@@ -75,20 +93,24 @@ async function checkDeviceCompatibility() {
         issues.push("MediaDevices não suportado.");
     }
 
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         issues.push("getUserMedia não suportado neste navegador.");
     }
 
     // Verificar se há câmera
-    try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const hasCamera = devices.some(d => d.kind === "videoinput");
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const hasCamera = devices.some(function (d) { return d.kind === "videoinput"; });
 
-        if (!hasCamera) {
-            issues.push("Nenhuma câmera encontrada.");
+            if (!hasCamera) {
+                issues.push("Nenhuma câmera encontrada.");
+            }
+        } catch (error) {
+            issues.push("Não foi possível verificar dispositivos de mídia.");
         }
-    } catch {
-        issues.push("Não foi possível verificar dispositivos de mídia.");
+    } else {
+        issues.push("enumerateDevices não suportado neste navegador.");
     }
 
     // Verificar permissão (quando suportado)
@@ -98,7 +120,7 @@ async function checkDeviceCompatibility() {
             if (permission.state === 'denied') {
                 issues.push("Permissão da câmera está bloqueada.");
             }
-        } catch {
+        } catch (error) {
             console.log("Permissions API não suportada totalmente.");
         }
     }
@@ -134,7 +156,7 @@ async function startCamera() {
 
     } catch (err) {
 
-        Swal.fire({
+        showAlert({
             icon: 'error',
             title: 'Erro ao acessar câmera',
             html: `
@@ -185,7 +207,7 @@ btn.onclick = async () => {
         const t1 = performance.now();
         const durationMs = Math.round(t1 - t0);
 
-        const text = result?.data?.text || '';
+        const text = (result && result.data && result.data.text) ? result.data.text : '';
         const matched = text.match(/\b\d{5}-?\d{3}\b/);
 
         if (matched) {
@@ -200,7 +222,7 @@ btn.onclick = async () => {
 
     } catch (e) {
 
-        Swal.fire({
+        showAlert({
             icon: 'error',
             title: 'Erro no Processamento',
             text: e.message || 'Erro desconhecido'
@@ -251,7 +273,7 @@ function limparTabela() {
 
 btnClear.onclick = async () => {
 
-    const result = await Swal.fire({
+    const result = await showAlert({
         icon: 'warning',
         title: 'Confirmar Limpeza',
         text: 'Deseja realmente limpar todas as leituras?',
@@ -283,7 +305,7 @@ function confirmarCepManual() {
     const cep = manualCepInput.value.trim();
 
     if (!/^\d{5}-?\d{3}$/.test(cep)) {
-        Swal.fire({
+        showAlert({
             icon: 'error',
             title: 'CEP Inválido',
             text: 'Use o formato 12345-678 ou 12345678'
