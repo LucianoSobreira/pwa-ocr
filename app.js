@@ -16,8 +16,9 @@ let currentStream = null;
 let deviceCompatible = false;
 const SCAN_LABEL_CAPTURE = 'Capturar Imagem';
 const SCAN_LABEL_PROCESSING = 'Processando...';
-const MAX_OCR_WIDTH = 960;
-const OCR_IMAGE_QUALITY = 0.9;
+const MAX_OCR_WIDTH_ROI = 720;
+const MAX_OCR_WIDTH_FULL = 900;
+const OCR_IMAGE_QUALITY = 0.86;
 const GRAYSCALE_DARK_MULTIPLIER = 0.82;
 const GRAYSCALE_LIGHT_MULTIPLIER = 1.18;
 
@@ -67,12 +68,12 @@ function terminateOcrWorker() {
     ocrWorkerPromise = null;
 }
 
-function buildOptimizedOcrImage(frameCanvas) {
+function buildOptimizedOcrImage(frameCanvas, maxWidth = MAX_OCR_WIDTH_FULL, applyEnhancement = true) {
     const sourceWidth = frameCanvas.width;
     const sourceHeight = frameCanvas.height;
     if (!sourceWidth || !sourceHeight) return null;
 
-    const scale = Math.min(1, MAX_OCR_WIDTH / sourceWidth);
+    const scale = Math.min(1, maxWidth / sourceWidth);
     const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
     const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
 
@@ -85,18 +86,20 @@ function buildOptimizedOcrImage(frameCanvas) {
 
     ctx.drawImage(frameCanvas, 0, 0, targetWidth, targetHeight);
 
-    const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-    const pixels = imageData.data;
-    for (let i = 0; i < pixels.length; i += 4) {
-        const gray = (pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114);
-        const adjustedGray = gray < 140
-            ? gray * GRAYSCALE_DARK_MULTIPLIER
-            : Math.min(255, gray * GRAYSCALE_LIGHT_MULTIPLIER);
-        pixels[i] = adjustedGray;
-        pixels[i + 1] = adjustedGray;
-        pixels[i + 2] = adjustedGray;
+    if (applyEnhancement) {
+        const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+        const pixels = imageData.data;
+        for (let i = 0; i < pixels.length; i += 4) {
+            const gray = (pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114);
+            const adjustedGray = gray < 140
+                ? gray * GRAYSCALE_DARK_MULTIPLIER
+                : Math.min(255, gray * GRAYSCALE_LIGHT_MULTIPLIER);
+            pixels[i] = adjustedGray;
+            pixels[i + 1] = adjustedGray;
+            pixels[i + 2] = adjustedGray;
+        }
+        ctx.putImageData(imageData, 0, 0);
     }
-    ctx.putImageData(imageData, 0, 0);
 
     return optimizedCanvas.toDataURL('image/jpeg', OCR_IMAGE_QUALITY);
 }
@@ -127,29 +130,22 @@ function getCepRoiCandidates(frameWidth, frameHeight) {
     const w = frameWidth;
     const h = frameHeight;
 
-    return [
-        {
-            name: 'address_block_bottom',
-            x: Math.round(w * 0.06),
-            y: Math.round(h * 0.50),
-            width: Math.round(w * 0.88),
-            height: Math.round(h * 0.42)
-        },
-        {
-            name: 'address_block_center',
-            x: Math.round(w * 0.10),
-            y: Math.round(h * 0.36),
-            width: Math.round(w * 0.80),
+    // ROI única para manter ganho de performance: onde CEP costuma aparecer em etiquetas/endereço.
+    if (h >= w) {
+        return [{
+            x: Math.round(w * 0.08),
+            y: Math.round(h * 0.52),
+            width: Math.round(w * 0.84),
             height: Math.round(h * 0.36)
-        },
-        {
-            name: 'address_block_right',
-            x: Math.round(w * 0.42),
-            y: Math.round(h * 0.42),
-            width: Math.round(w * 0.52),
-            height: Math.round(h * 0.46)
-        }
-    ];
+        }];
+    }
+
+    return [{
+        x: Math.round(w * 0.38),
+        y: Math.round(h * 0.44),
+        width: Math.round(w * 0.56),
+        height: Math.round(h * 0.40)
+    }];
 }
 
 async function recognizeCepWithRoiFallback(worker, frameCanvas) {
@@ -159,7 +155,7 @@ async function recognizeCepWithRoiFallback(worker, frameCanvas) {
         const roiCanvas = buildCanvasFromRegion(frameCanvas, roi);
         if (!roiCanvas) continue;
 
-        const roiImgData = buildOptimizedOcrImage(roiCanvas);
+        const roiImgData = buildOptimizedOcrImage(roiCanvas, MAX_OCR_WIDTH_ROI, true);
         if (!roiImgData) continue;
 
         const roiResult = await worker.recognize(roiImgData);
@@ -168,7 +164,7 @@ async function recognizeCepWithRoiFallback(worker, frameCanvas) {
         if (roiCep) return roiCep;
     }
 
-    const optimizedFullImgData = buildOptimizedOcrImage(frameCanvas);
+    const optimizedFullImgData = buildOptimizedOcrImage(frameCanvas, MAX_OCR_WIDTH_FULL, false);
     const fullImgData = optimizedFullImgData || frameCanvas.toDataURL('image/jpeg', OCR_IMAGE_QUALITY);
     const fullResult = await worker.recognize(fullImgData);
     const fullText = (fullResult && fullResult.data && fullResult.data.text) ? fullResult.data.text : '';
