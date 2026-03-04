@@ -101,6 +101,80 @@ function buildOptimizedOcrImage(frameCanvas) {
     return optimizedCanvas.toDataURL('image/jpeg', OCR_IMAGE_QUALITY);
 }
 
+function buildCanvasFromRegion(frameCanvas, region) {
+    const x = Math.max(0, Math.min(region.x, frameCanvas.width - 1));
+    const y = Math.max(0, Math.min(region.y, frameCanvas.height - 1));
+    const width = Math.max(1, Math.min(region.width, frameCanvas.width - x));
+    const height = Math.max(1, Math.min(region.height, frameCanvas.height - y));
+
+    const croppedCanvas = document.createElement('canvas');
+    croppedCanvas.width = width;
+    croppedCanvas.height = height;
+
+    const ctx = croppedCanvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.drawImage(
+        frameCanvas,
+        x, y, width, height,
+        0, 0, width, height
+    );
+
+    return croppedCanvas;
+}
+
+function getCepRoiCandidates(frameWidth, frameHeight) {
+    const w = frameWidth;
+    const h = frameHeight;
+
+    return [
+        {
+            name: 'address_block_bottom',
+            x: Math.round(w * 0.06),
+            y: Math.round(h * 0.50),
+            width: Math.round(w * 0.88),
+            height: Math.round(h * 0.42)
+        },
+        {
+            name: 'address_block_center',
+            x: Math.round(w * 0.10),
+            y: Math.round(h * 0.36),
+            width: Math.round(w * 0.80),
+            height: Math.round(h * 0.36)
+        },
+        {
+            name: 'address_block_right',
+            x: Math.round(w * 0.42),
+            y: Math.round(h * 0.42),
+            width: Math.round(w * 0.52),
+            height: Math.round(h * 0.46)
+        }
+    ];
+}
+
+async function recognizeCepWithRoiFallback(worker, frameCanvas) {
+    const roiCandidates = getCepRoiCandidates(frameCanvas.width, frameCanvas.height);
+
+    for (const roi of roiCandidates) {
+        const roiCanvas = buildCanvasFromRegion(frameCanvas, roi);
+        if (!roiCanvas) continue;
+
+        const roiImgData = buildOptimizedOcrImage(roiCanvas);
+        if (!roiImgData) continue;
+
+        const roiResult = await worker.recognize(roiImgData);
+        const roiText = (roiResult && roiResult.data && roiResult.data.text) ? roiResult.data.text : '';
+        const roiCep = extractCepFromOcrText(roiText);
+        if (roiCep) return roiCep;
+    }
+
+    const optimizedFullImgData = buildOptimizedOcrImage(frameCanvas);
+    const fullImgData = optimizedFullImgData || frameCanvas.toDataURL('image/jpeg', OCR_IMAGE_QUALITY);
+    const fullResult = await worker.recognize(fullImgData);
+    const fullText = (fullResult && fullResult.data && fullResult.data.text) ? fullResult.data.text : '';
+    return extractCepFromOcrText(fullText);
+}
+
 function showAlert(options) {
     if (window.Swal && typeof window.Swal.fire === 'function') {
         return window.Swal.fire(options);
@@ -449,18 +523,12 @@ btn.onclick = async () => {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0);
-    const optimizedImgData = buildOptimizedOcrImage(canvas);
-    const imgData = optimizedImgData || canvas.toDataURL('image/jpeg', OCR_IMAGE_QUALITY);
-
     try {
         const t0 = performance.now();
         const worker = await getOrCreateOcrWorker();
-        const result = await worker.recognize(imgData);
+        const cep = await recognizeCepWithRoiFallback(worker, canvas);
         const t1 = performance.now();
         const durationMs = Math.round(t1 - t0);
-
-        const text = (result && result.data && result.data.text) ? result.data.text : '';
-        const cep = extractCepFromOcrText(text);
 
         if (cep) {
             enviarDados(cep, durationMs);
