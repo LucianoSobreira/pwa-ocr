@@ -14,6 +14,13 @@ const deviceStatus = document.getElementById('device-status');
 
 let currentStream = null;
 let deviceCompatible = false;
+const SCAN_LABEL_CAPTURE = 'Capturar Imagem';
+const SCAN_LABEL_PROCESSING = 'Processando...';
+
+function updateScanButtonLabel() {
+    if (!btnScanText) return;
+    btnScanText.textContent = SCAN_LABEL_CAPTURE;
+}
 
 function showAlert(options) {
     if (window.Swal && typeof window.Swal.fire === 'function') {
@@ -56,7 +63,10 @@ function renderChecksHtml(checks) {
 ========================================================= */
 
 document.addEventListener("DOMContentLoaded", async () => {
-    await verificarCompatibilidadeDispositivo();
+    const result = await verificarCompatibilidadeDispositivo();
+    if (result.compatible) {
+        await ensureCameraReady();
+    }
 });
 
 function atualizarStatusDispositivo(result) {
@@ -226,12 +236,12 @@ async function checkDeviceCompatibility() {
 }
 
 /* =========================================================
-   CAMERA START (ONLY ON USER ACTION)
+   CAMERA CONTROL
 ========================================================= */
 
 async function startCamera() {
 
-    if (!deviceCompatible) return;
+    if (!deviceCompatible || currentStream) return;
 
     try {
         currentStream = await navigator.mediaDevices.getUserMedia({
@@ -243,6 +253,7 @@ async function startCamera() {
 
         video.srcObject = currentStream;
         await video.play();
+        updateScanButtonLabel();
 
     } catch (err) {
 
@@ -264,11 +275,21 @@ async function startCamera() {
     }
 }
 
+async function ensureCameraReady() {
+    if (!deviceCompatible || currentStream) return;
+    try {
+        await startCamera();
+    } catch (error) {
+        // O alerta já é exibido em startCamera; não interrompe o restante da aplicação.
+    }
+}
+
 function stopCamera() {
     if (currentStream) {
         currentStream.getTracks().forEach(track => track.stop());
         currentStream = null;
     }
+    updateScanButtonLabel();
 }
 
 function formatCepFromDigits(digits) {
@@ -286,18 +307,16 @@ function normalizeOcrTextForCep(text) {
         .replace(/Z/g, '2');
 }
 
-function extractCepFromOcrText(text) {
-    if (!text) return null;
-
-    const normalizedText = normalizeOcrTextForCep(text);
+function extractCepWithPatterns(text) {
     const patterns = [
+        /\b\d{5}-?\d{3}\b/g,
+        /\b\d{5}\s*[-.,]?\s*\d{3}\b/g,
         /\b\d{2}[.\s]?\d{3}\s*[-.,]?\s*\d{3}\b/g,
-        /\b\d{5}\s*[-.,]?\s*\d{3}\b/g
+        /\d{8}/g
     ];
 
     for (const pattern of patterns) {
-        const matches = normalizedText.match(pattern) || [];
-
+        const matches = text.match(pattern) || [];
         for (const match of matches) {
             const digits = match.replace(/\D/g, '');
             const cep = formatCepFromDigits(digits);
@@ -308,6 +327,18 @@ function extractCepFromOcrText(text) {
     return null;
 }
 
+function extractCepFromOcrText(text) {
+    if (!text) return null;
+
+    // Prioriza a regra antiga (old_app.js) no texto original.
+    const cepFromRawText = extractCepWithPatterns(text);
+    if (cepFromRawText) return cepFromRawText;
+
+    // Fallback para OCR com caracteres ambíguos.
+    const normalizedText = normalizeOcrTextForCep(text);
+    return extractCepWithPatterns(normalizedText);
+}
+
 /* =========================================================
    CAPTURE BUTTON
 ========================================================= */
@@ -315,13 +346,13 @@ function extractCepFromOcrText(text) {
 btn.onclick = async () => {
 
     if (!currentStream) {
-        await startCamera();
+        await ensureCameraReady();
         if (!currentStream) return;
     }
 
     btn.disabled = true;
     btn.classList.add('processing');
-    btnScanText.textContent = 'Processando...';
+    btnScanText.textContent = SCAN_LABEL_PROCESSING;
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -356,7 +387,7 @@ btn.onclick = async () => {
     } finally {
         btn.disabled = false;
         btn.classList.remove('processing');
-        btnScanText.textContent = 'Capturar Imagem';
+        updateScanButtonLabel();
     }
 };
 
@@ -456,7 +487,10 @@ manualCepInput.oninput = () => {
 btnConfirmCep.onclick = confirmarCepManual;
 btnCancelCep.onclick = fecharModalCep;
 btnCheckDevice.onclick = async () => {
-    await verificarCompatibilidadeDispositivo(true);
+    const result = await verificarCompatibilidadeDispositivo(true);
+    if (result.compatible) {
+        await ensureCameraReady();
+    }
 };
 
 /* =========================================================
@@ -467,3 +501,5 @@ window.addEventListener('beforeunload', stopCamera);
 window.addEventListener('visibilitychange', () => {
     if (document.hidden) stopCamera();
 });
+
+updateScanButtonLabel();
