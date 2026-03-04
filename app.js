@@ -16,10 +16,89 @@ let currentStream = null;
 let deviceCompatible = false;
 const SCAN_LABEL_CAPTURE = 'Capturar Imagem';
 const SCAN_LABEL_PROCESSING = 'Processando...';
+const MAX_OCR_WIDTH = 960;
+const OCR_IMAGE_QUALITY = 0.9;
+const GRAYSCALE_DARK_MULTIPLIER = 0.82;
+const GRAYSCALE_LIGHT_MULTIPLIER = 1.18;
+
+let ocrWorker = null;
+let ocrWorkerPromise = null;
 
 function updateScanButtonLabel() {
     if (!btnScanText) return;
     btnScanText.textContent = SCAN_LABEL_CAPTURE;
+}
+
+async function getOrCreateOcrWorker() {
+    if (ocrWorker) return ocrWorker;
+    if (ocrWorkerPromise) return ocrWorkerPromise;
+
+    ocrWorkerPromise = (async () => {
+        const worker = await Tesseract.createWorker();
+        await worker.loadLanguage('por');
+        await worker.initialize('por');
+        await worker.setParameters({
+            tessedit_char_whitelist: '0123456789-., ',
+            tessedit_pageseg_mode: '6'
+        });
+        ocrWorker = worker;
+        return worker;
+    })();
+
+    try {
+        return await ocrWorkerPromise;
+    } catch (error) {
+        ocrWorkerPromise = null;
+        throw error;
+    }
+}
+
+function warmUpOcrWorker() {
+    getOrCreateOcrWorker().catch(function (error) {
+        console.error('OCR warm-up error:', error);
+    });
+}
+
+function terminateOcrWorker() {
+    if (ocrWorker) {
+        ocrWorker.terminate();
+        ocrWorker = null;
+    }
+    ocrWorkerPromise = null;
+}
+
+function buildOptimizedOcrImage(frameCanvas) {
+    const sourceWidth = frameCanvas.width;
+    const sourceHeight = frameCanvas.height;
+    if (!sourceWidth || !sourceHeight) return null;
+
+    const scale = Math.min(1, MAX_OCR_WIDTH / sourceWidth);
+    const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+    const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+    const optimizedCanvas = document.createElement('canvas');
+    optimizedCanvas.width = targetWidth;
+    optimizedCanvas.height = targetHeight;
+
+    const ctx = optimizedCanvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+
+    ctx.drawImage(frameCanvas, 0, 0, targetWidth, targetHeight);
+
+    const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+    const pixels = imageData.data;
+    for (let i = 0; i < pixels.length; i += 4) {
+        const gray = (pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114);
+        const adjustedGray = gray < 140
+            ? gray * GRAYSCALE_DARK_MULTIPLIER
+            : Math.min(255, gray * GRAYSCALE_LIGHT_MULTIPLIER);
+        pixels[i] = adjustedGray;
+        pixels[i + 1] = adjustedGray;
+        pixels[i + 2] = adjustedGray;
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    return optimizedCanvas.toDataURL('image/jpeg', OCR_IMAGE_QUALITY);
 }
 
 function showAlert(options) {
@@ -66,6 +145,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const result = await verificarCompatibilidadeDispositivo();
     if (result.compatible) {
         await ensureCameraReady();
+        warmUpOcrWorker();
     }
 });
 
@@ -354,14 +434,28 @@ btn.onclick = async () => {
     btn.classList.add('processing');
     btnScanText.textContent = SCAN_LABEL_PROCESSING;
 
+    if (!video.videoWidth || !video.videoHeight) {
+        showAlert({
+            icon: 'warning',
+            title: 'Câmera indisponível',
+            text: 'A câmera ainda não está pronta. Tente novamente em alguns instantes.'
+        });
+        btn.disabled = false;
+        btn.classList.remove('processing');
+        updateScanButtonLabel();
+        return;
+    }
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0);
-    const imgData = canvas.toDataURL('image/jpeg');
+    const optimizedImgData = buildOptimizedOcrImage(canvas);
+    const imgData = optimizedImgData || canvas.toDataURL('image/jpeg', OCR_IMAGE_QUALITY);
 
     try {
         const t0 = performance.now();
-        const result = await Tesseract.recognize(imgData, 'por');
+        const worker = await getOrCreateOcrWorker();
+        const result = await worker.recognize(imgData);
         const t1 = performance.now();
         const durationMs = Math.round(t1 - t0);
 
@@ -490,6 +584,7 @@ btnCheckDevice.onclick = async () => {
     const result = await verificarCompatibilidadeDispositivo(true);
     if (result.compatible) {
         await ensureCameraReady();
+        warmUpOcrWorker();
     }
 };
 
@@ -497,7 +592,10 @@ btnCheckDevice.onclick = async () => {
    CLEANUP ON PAGE EXIT (ANDROID SAFETY)
 ========================================================= */
 
-window.addEventListener('beforeunload', stopCamera);
+window.addEventListener('beforeunload', () => {
+    stopCamera();
+    terminateOcrWorker();
+});
 window.addEventListener('visibilitychange', () => {
     if (document.hidden) stopCamera();
 });
