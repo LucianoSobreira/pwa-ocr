@@ -621,10 +621,9 @@ function normalizeOcrTextForCep(text) {
 
 function extractCepWithPatterns(text) {
     const patterns = [
-        /\b\d{5}-?\d{3}\b/g,
-        /\b\d{5}\s*[-.,]?\s*\d{3}\b/g,
-        /\b\d{2}[.\s]?\d{3}\s*[-.,]?\s*\d{3}\b/g,
-        /\d{8}/g
+        /\b\d{5}-\d{3}\b/g,
+        /\b\d{5}\s*[-.,]\s*\d{3}\b/g,
+        /\b\d{2}[.\s]?\d{3}\s*[-.,]\s*\d{3}\b/g
     ];
 
     for (const pattern of patterns) {
@@ -639,15 +638,44 @@ function extractCepWithPatterns(text) {
     return null;
 }
 
+function extractStrictHyphenCep(text) {
+    const match = text.match(/\b\d{5}-\d{3}\b/);
+    return match ? match[0] : null;
+}
+
+function extractCepFromCepLines(text) {
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+        if (!/\bC[ÉE]?P\b/i.test(line)) continue;
+        const strictCep = extractStrictHyphenCep(line);
+        if (strictCep) return strictCep;
+        const cep = extractCepWithPatterns(line);
+        if (cep) return cep;
+    }
+    return null;
+}
+
 function extractCepFromOcrText(text) {
     if (!text) return null;
 
-    // Prioriza a regra antiga (old_app.js) no texto original.
+    // Prioriza linha com marcador "CEP" para reduzir falso positivo em campos numéricos (ex.: MEDIDOR).
+    const cepFromCepLine = extractCepFromCepLines(text);
+    if (cepFromCepLine) return cepFromCepLine;
+
+    // Sem marcador CEP, prioriza formato estrito XXXXX-XXX no texto completo.
+    const strictCepFromRawText = extractStrictHyphenCep(text);
+    if (strictCepFromRawText) return strictCepFromRawText;
+
+    // Fallback: busca no texto original completo.
     const cepFromRawText = extractCepWithPatterns(text);
     if (cepFromRawText) return cepFromRawText;
 
     // Fallback para OCR com caracteres ambíguos.
     const normalizedText = normalizeOcrTextForCep(text);
+    const strictCepFromNormalizedText = extractStrictHyphenCep(normalizedText);
+    if (strictCepFromNormalizedText) return strictCepFromNormalizedText;
+    const cepFromNormalizedCepLine = extractCepFromCepLines(normalizedText);
+    if (cepFromNormalizedCepLine) return cepFromNormalizedCepLine;
     return extractCepWithPatterns(normalizedText);
 }
 
