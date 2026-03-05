@@ -11,6 +11,9 @@ const btnConfirmCep = document.getElementById('btn-confirm-cep');
 const btnCancelCep = document.getElementById('btn-cancel-cep');
 const btnCheckDevice = document.getElementById('btn-check-device');
 const deviceStatus = document.getElementById('device-status');
+const cameraSelector = document.getElementById('camera-selector');
+const cameraSelect = document.getElementById('camera-select');
+const btnApplyCamera = document.getElementById('btn-apply-camera');
 
 let currentStream = null;
 let deviceCompatible = false;
@@ -21,9 +24,19 @@ const MAX_OCR_WIDTH_FULL = 900;
 const OCR_IMAGE_QUALITY = 0.86;
 const GRAYSCALE_DARK_MULTIPLIER = 0.82;
 const GRAYSCALE_LIGHT_MULTIPLIER = 1.18;
+const DEVICE_PROFILES = {
+    COLLECTOR: 'collector',
+    TABLET: 'tablet',
+    MOBILE: 'mobile',
+    DESKTOP: 'desktop'
+};
+const COLLECTOR_USER_AGENT_PATTERN = /zebra|symbol|honeywell|datalogic|intermec|bluebird|newland|chainway|urovo|sunmi|m3\s?mobile|unitech/i;
 
 let ocrWorker = null;
 let ocrWorkerPromise = null;
+let currentDeviceProfile = DEVICE_PROFILES.DESKTOP;
+let availableCameraDevices = [];
+let selectedCameraId = null;
 
 function updateScanButtonLabel() {
     if (!btnScanText) return;
@@ -207,14 +220,144 @@ function renderChecksHtml(checks) {
         "</ul>";
 }
 
+function getCameraOptionLabel(device, index) {
+    const label = device && device.label ? device.label.trim() : '';
+    return label || ('Câmera ' + (index + 1));
+}
+
+function getPreferredCameraId(devices) {
+    if (!devices || !devices.length) return null;
+
+    const rearCameraPattern = /back|rear|traseira|environment|world|externa/i;
+    const preferred = devices.find(function (device) {
+        return rearCameraPattern.test((device.label || '').toLowerCase());
+    });
+
+    return preferred ? preferred.deviceId : devices[0].deviceId;
+}
+
+function renderCameraSelector(devices) {
+    if (!cameraSelector || !cameraSelect || !btnApplyCamera) return;
+
+    cameraSelect.innerHTML = '';
+
+    if (!devices || !devices.length) {
+        cameraSelector.style.display = 'none';
+        btnApplyCamera.disabled = true;
+        return;
+    }
+
+    devices.forEach(function (device, index) {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = getCameraOptionLabel(device, index);
+        cameraSelect.appendChild(option);
+    });
+
+    if (!selectedCameraId || !devices.some(function (device) { return device.deviceId === selectedCameraId; })) {
+        selectedCameraId = getPreferredCameraId(devices);
+    }
+
+    cameraSelect.value = selectedCameraId || devices[0].deviceId;
+    selectedCameraId = cameraSelect.value;
+
+    cameraSelector.style.display = devices.length > 1 ? 'flex' : 'none';
+    btnApplyCamera.disabled = !selectedCameraId;
+}
+
+async function loadCameraDevices(preserveSelection = true) {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) {
+        availableCameraDevices = [];
+        selectedCameraId = null;
+        renderCameraSelector([]);
+        return [];
+    }
+
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter(function (device) {
+            return device.kind === 'videoinput';
+        });
+
+        const previousSelection = preserveSelection ? selectedCameraId : null;
+        availableCameraDevices = cameras;
+
+        if (previousSelection && cameras.some(function (device) { return device.deviceId === previousSelection; })) {
+            selectedCameraId = previousSelection;
+        } else {
+            selectedCameraId = getPreferredCameraId(cameras);
+        }
+
+        renderCameraSelector(cameras);
+        return cameras;
+    } catch (error) {
+        console.error('Camera enumeration error:', error);
+        availableCameraDevices = [];
+        selectedCameraId = null;
+        renderCameraSelector([]);
+        return [];
+    }
+}
+
+async function restartCameraWithSelectedDevice() {
+    stopCamera();
+    await ensureCameraReady();
+    await loadCameraDevices(true);
+}
+
 /* =========================================================
    DEVICE COMPATIBILITY CHECK
 ========================================================= */
 
+function getDeviceProfileLabel(profile) {
+    if (profile === DEVICE_PROFILES.COLLECTOR) return 'coletor';
+    if (profile === DEVICE_PROFILES.TABLET) return 'tablet';
+    if (profile === DEVICE_PROFILES.MOBILE) return 'celular';
+    return 'desktop';
+}
+
+function detectDeviceProfile() {
+    const ua = navigator.userAgent || '';
+    const touchPoints = navigator.maxTouchPoints || 0;
+    const isTouch = touchPoints > 0 || /android|iphone|ipad|ipod/i.test(ua);
+
+    const screenW = window.screen && window.screen.width ? window.screen.width : window.innerWidth;
+    const screenH = window.screen && window.screen.height ? window.screen.height : window.innerHeight;
+    const shortEdge = Math.min(screenW, screenH);
+    const longEdge = Math.max(screenW, screenH);
+
+    const isLikelyCollectorUa = COLLECTOR_USER_AGENT_PATTERN.test(ua);
+    const isLikelyCollectorScreen = isTouch && shortEdge <= 760 && longEdge <= 900;
+    if (isLikelyCollectorUa || isLikelyCollectorScreen) return DEVICE_PROFILES.COLLECTOR;
+
+    const isIPadOS = /Macintosh/i.test(ua) && touchPoints > 1;
+    const isTabletUa = /ipad|tablet/i.test(ua) || isIPadOS;
+    if (isTabletUa || (isTouch && shortEdge >= 768)) return DEVICE_PROFILES.TABLET;
+
+    if (/mobi|iphone|ipod|android/i.test(ua) || (isTouch && shortEdge < 768)) {
+        return DEVICE_PROFILES.MOBILE;
+    }
+
+    return DEVICE_PROFILES.DESKTOP;
+}
+
+function applyDeviceProfile() {
+    const profile = detectDeviceProfile();
+    currentDeviceProfile = profile;
+
+    document.body.classList.remove('device-collector', 'device-tablet', 'device-mobile');
+    if (profile === DEVICE_PROFILES.COLLECTOR) document.body.classList.add('device-collector');
+    if (profile === DEVICE_PROFILES.TABLET) document.body.classList.add('device-tablet');
+    if (profile === DEVICE_PROFILES.MOBILE) document.body.classList.add('device-mobile');
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
+    applyDeviceProfile();
     const result = await verificarCompatibilidadeDispositivo();
     if (result.compatible) {
+        await loadCameraDevices(false);
         await ensureCameraReady();
+        await loadCameraDevices(true);
         warmUpOcrWorker();
     }
 });
@@ -226,10 +369,10 @@ function atualizarStatusDispositivo(result) {
 
     if (result.compatible) {
         deviceStatus.classList.add('ok');
-        deviceStatus.textContent = 'Status do dispositivo: compatível';
+        deviceStatus.textContent = 'Status do dispositivo: compatível (' + getDeviceProfileLabel(currentDeviceProfile) + ')';
     } else {
         deviceStatus.classList.add('error');
-        deviceStatus.textContent = 'Status do dispositivo: não compatível';
+        deviceStatus.textContent = 'Status do dispositivo: não compatível (' + getDeviceProfileLabel(currentDeviceProfile) + ')';
     }
 }
 
@@ -394,18 +537,37 @@ async function startCamera() {
     if (!deviceCompatible || currentStream) return;
 
     try {
+        const videoConstraints = selectedCameraId
+            ? { deviceId: { exact: selectedCameraId } }
+            : { facingMode: { ideal: "environment" } };
+
         currentStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                facingMode: { ideal: "environment" }
-            },
+            video: videoConstraints,
             audio: false
         });
 
         video.srcObject = currentStream;
         await video.play();
+        await loadCameraDevices(true);
         updateScanButtonLabel();
 
     } catch (err) {
+        if (selectedCameraId && (err.name === 'NotFoundError' || err.name === 'OverconstrainedError')) {
+            selectedCameraId = null;
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: "environment" } },
+                    audio: false
+                });
+                video.srcObject = currentStream;
+                await video.play();
+                await loadCameraDevices(true);
+                updateScanButtonLabel();
+                return;
+            } catch (fallbackErr) {
+                err = fallbackErr;
+            }
+        }
 
         showAlert({
             icon: 'error',
@@ -644,10 +806,30 @@ manualCepInput.oninput = () => {
 
 btnConfirmCep.onclick = confirmarCepManual;
 btnCancelCep.onclick = fecharModalCep;
+if (cameraSelect) {
+    cameraSelect.onchange = () => {
+        selectedCameraId = cameraSelect.value;
+        if (btnApplyCamera) btnApplyCamera.disabled = !selectedCameraId;
+    };
+}
+if (btnApplyCamera) {
+    btnApplyCamera.onclick = async () => {
+        if (!selectedCameraId || !deviceCompatible) return;
+
+        btnApplyCamera.disabled = true;
+        try {
+            await restartCameraWithSelectedDevice();
+        } finally {
+            btnApplyCamera.disabled = false;
+        }
+    };
+}
 btnCheckDevice.onclick = async () => {
     const result = await verificarCompatibilidadeDispositivo(true);
     if (result.compatible) {
+        await loadCameraDevices(false);
         await ensureCameraReady();
+        await loadCameraDevices(true);
         warmUpOcrWorker();
     }
 };
@@ -662,6 +844,12 @@ window.addEventListener('beforeunload', () => {
 });
 window.addEventListener('visibilitychange', () => {
     if (document.hidden) stopCamera();
+});
+window.addEventListener('resize', () => {
+    applyDeviceProfile();
+    if (deviceStatus && (deviceStatus.classList.contains('ok') || deviceStatus.classList.contains('error'))) {
+        atualizarStatusDispositivo({ compatible: deviceCompatible });
+    }
 });
 
 updateScanButtonLabel();
