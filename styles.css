@@ -1,8 +1,5 @@
 body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; background: #f4f4f9; margin: 0; padding: 20px; }
-:root { --camera-preview-width: 300px; }
-body.device-collector { --camera-preview-width: 190px; }
-body.device-tablet { --camera-preview-width: 250px; }
-body.device-mobile { --camera-preview-width: 220px; }
+:root { --camera-preview-width: 280px; }
 #video { width: 100%; max-width: var(--camera-preview-width); border: 3px solid #333; border-radius: 12px; background: #000; display: block; margin: 0 auto; }
 .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
 .camera-picker { margin-top: 12px; display: none; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
